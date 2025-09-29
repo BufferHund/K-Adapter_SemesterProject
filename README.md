@@ -1,155 +1,214 @@
-# K-Adapter: Infusing Knowledge into Pre-Trained Models with Adapters
-This repository is the official implementation of the paper "K-Adapter: Infusing Knowledge into Pre-Trained Models with Adapters", ACL-IJCNLP 2021 Findings.
+# K-Adapter Experiments and Results (Reorganized)
 
-In the K-adapter paper, we present a flexible approach that supports continual knowledge infusion into large pre-trained models (e.g. RoBERTa in this work).
-We infuse factual knowledge and linguistic knowledge, and show that adapters for both kinds of knowledge work well on downstream tasks.
+This repository contains our experimental study of K-Adapter on entity typing and related tasks, along with extensive ablations and efficiency analysis. We reorganized all runnable scripts under `Experiments/` to make reproduction straightforward, and we fixed several critical issues to support robust ablations.
 
-For more details, please check the latest version of the paper: [https://arxiv.org/abs/2002.01808](https://arxiv.org/abs/2002.01808)
+For the original K-Adapter paper, see: https://arxiv.org/abs/2002.01808
 
-## Prerequisites 
+## Environment
 - Python 3.6
 - PyTorch 1.3.1
 - tensorboardX
 - transformers
 
-We use huggingface/transformers framework, the environment can be installed with:
+Create environment and install dependencies:
 ```bash
 conda create -n kadapter python=3.6
-```
-```bash
+conda activate kadapter
 pip install -r requirements.txt
 ```
 
-## Pre-training Adapters
-In the pre-training procedure, we train each knowledge-specific adapter on different pre-training tasks individually. 
-### 1. Process Dataset
-- `./scripts/clean_T_REx.py`: clean [raw T-Rex dataset](https://hadyelsahar.github.io/t-rex/downloads/) (32G), and save the cleaned T-Rex to JSON format
-- `./scripts/create_subdataset-relation-classification.ipynb`: create the dataset from T-REx for pre-training factual adapter on relation classification task. This sub-dataset can be found [here](https://drive.google.com/drive/folders/1xRGmIUXwPrtnsksQ1GY8YAE87gf7Ct6E?usp=sharing).
-- `refer to this` to get the dependency parsing dataset : create the dataset from Book Corpus for pre-training the linguistic adapter on dependency parsing task.
+## Key Code Fixes Applied
+We applied the following fixes to enable dynamic and robust experiments (details documented in `ABLATION_STUDY_GUIDE.md`):
+- Dynamic adapter internals derived from `adapter_size` (hidden size, intermediate size, attention heads) to avoid shape/head divisibility issues when `adapter_size != 768`.
+- Robust "concat" fusion in `examples/run_finetune_openentity_adapter.py` that works for single or multiple adapters.
+- Correct saving of adapter models in `fac-adapter.py` to avoid saving tuples.
 
-### 2. Factual Adapter
-To pre-train fac-adapter, run
+## 4 Experiments and Results
+
+We structure the evaluation in three parts: fine-tuning vs. zero-shot; ablations on adapter architecture; and efficiency plus pre-training data impact.
+
+### 4.1 Fine-tuning vs. Zero-shot Transfer
+
+#### 4.1.1 Fine-tuning Performance on OpenEntity
+Our reproduction on OpenEntity shows that concatenation tends to outperform addition under matched hyperparameters, but none of the adapter settings surpass full fine-tuning of RoBERTa-large. Results summarized below:
+
+| Setting | Fusion | LR | Test F1 (ours) | Test F1 (paper) | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Baseline (full fine-tuning) | N/A | 2e-5 | ~76.2% | (n/a) | Reference baseline |
+| fac-adapter | add | 5e-6 | ~76.2% | ~77.5% | Matches baseline in our runs |
+| lin-adapter | add | 5e-6 | ~75.6% | ~76.9% | Slightly below baseline |
+| fac+lin | add | 5e-6 | ~75.4% | (concat ~77.6%) | Add underperforms |
+| fac+lin | concat | 5e-6 | ~75.8% | ~77.6% | Best adapter fusion for us |
+| fac+lin | concat | 1e-4 | ~68.8% | ~77.6% | Illustrates LR sensitivity |
+
+Run scripts:
 ```bash
-bash run_pretrain_fac-adapter.sh
-```
-### 3. Linguistic Adapter
-To pre-train lin-adapter, run
-```bash
-bash run_pretrain_lin-adapter.sh
-```
-The pre-trained fac-adapter and lin-adapter models can be found [here](https://drive.google.com/drive/folders/12mfLpYq4BTwdbLZnQsdwDJKubM9aOr9f?usp=sharing).
+# Fine-tune on OpenEntity (adapter tuning)
+bash Experiments/4.1/OpenEntity_Finetune/run_finetune_openentity_adapter.sh
 
-## Fine-tuning on Downstream Tasks
-Adapter Structure
-- The fac-adapter (lin-adapter) consists of two transformer layers (L=2, H=768, A = 12)
-- The RoBERTa layers where adapters plug in: 0,11,23 or 0,11,22
-- For using only single adapter
-    - Use the concatenation of the last hidden feature of RoBERTa and the last hidden feature of the adapter as the input representation for the task-specific layer.
-- For using combine adapter
-    - For each adapter, first concat the last hidden feature of RoBERTa and the last hidden feature of every adapter and feed into a linear layer separately, then concat the representations as input for task-specific layer.
-
-About how to load pretrained RoBERTa and pretrained adapter
-- The pre-trained adapters are in `./pretrained_models/fac-adapter/pytorch_model.bin` and `./pretrained_models/lin-adapter/pytorch_model.bin`.
-    For using only single adapter, for example, fac-adapter, then you can set the argument `meta_fac_adaptermodel=<the path of factual adapter model>` and set `meta_lin_adaptermodel=””`.
-    For using both adapters, just set the arguments `meta_fac_adaptermodel` and `meta_lin_adaptermodel` as the path of adapters.
-- The pretrained RoBERTa will be downloaded automaticly when you run the pipeline.
-
-### 1. Entity Typing
-#### 1.1 OpenEntity
-One single 16G P100
-
-**(1) run the pipeline**
-```bash
-bash run_finetune_openentity_adapter.sh
-```
-**(2) result**
-- with fac-adapter
-    dev: (0.7967123287671233, 0.7580813347236705, 0.7769169115682607)
-    test: (0.7929708951125755, 0.7584033613445378, 0.7753020134228187)
-- with lin-adapter
-    dev: (0.8071672354948806, 0.7398331595411888, 0.7720348204570185)
-    test:(0.8001135718341851, 0.7400210084033614, 0.7688949522510232)
-- with fac-adapter + lin-adapter
-    dev: (0.8001101321585903, 0.7575599582898853, 0.7782538832351366)
-    test: (0.7899568034557235, 0.7627737226277372, 0.7761273209549072)
-
-the results may vary when running on different machines, but should not differ too much.
-I just search results from per_gpu_train_batch_sizeh: [4, 8] lr: [1e-5, 5e-6], warmup[0,200,500,1000,1200], maybe you can change other parameters and see the results.
-For w/fac-adapter, the best performance is achieved at gpu_num=1, per_gpu_train_batch_size=4, lr=5e-6, warmup=500(it takes about 2 hours to get the best result running on singe 16G P100)
-For w/lin-adapter, the best performance is achieved at gpu_num=1, per_gpu_train_batch_size=4, lr=5e-6, warmup=1000(it takes about 2 hours to get the best result running on singe 16G P100)
-
-**(3) Data format**
-
-Add special token "@" before and after a certain entity, then the first @ is adopted to perform classification.
-9 entity categories: ['entity', 'location', 'time', 'organization', 'object', 'event', 'place', 'person', 'group'], each entity can be classified to several of them or none of them. The output is represented as [0,1,1,0,1,0,0,0,0], 0 represents the entity does not belong to the type, while 1 belongs to.
-
-#### 1.2 FIGER
-**(1) run the pipeline**
-```bash
-bash run_finetune_figer_adapter.sh
-```
-The detailed hyperparamerters are listed in the running script.
-
-### 2. Relation Classification
-4*16G P100
-
-**(1) run the pipeline**
-```bash
-bash run_finetune_tacred_adapter.sh
-```
-**(2) result**
-- with fac-adapter
-    - 'dev': (0.6686945083853996, 0.7481604120676968, 0.7061989928807085)
-    - 'test': (0.693900391717963, 0.7458646616541353, 0.7189447746050153)
-- with lin-adapter
-    - 'dev': (0.6679165308118683, 0.7536791758646063, 0.7082108902333621),
-    - 'test': (0.6884615384615385, 0.7536842105263157, 0.7195979899497488)
-- with fac-adapter + lin-adapter
-    - 'dev': (0.6793893129770993, 0.7367549668874173, 0.7069102462271645)
-    - 'test': (0.7014245014245014, 0.7404511278195489, 0.7204096561814192)
-
-- the results may vary when running on different machines, but should not differ too much.
-- I just search results from per_gpu_train_batch_sizeh: [4, 8] lr: [1e-5, 5e-6], warmup[0,200,1000,1200], maybe you can change other parameters and see the results.
-- The best performance is achieved at gpu_num=4, per_gpu_train_batch_size=8, lr=1e-5, warmup=200 (it takes about 7 hours to get the best result running on 4 16G P100)
-- The detailed hyperparamerters are listed in the running script.
-
-**(3) Data format**
-
-Add special token "@" before and after the first entity, add '#' before and after the second entity. Then the representations of  @ and # are concatenated to perform relation classification.
-
-
-### 3. Question Answering
-#### 3.1 CosmosQA
-One single 16G P100
-
-**(1) run the pipeline**
-```bash
-bash run_finetune_cosmosqa_adapter.sh
+# Full fine-tuning baseline (no adapters)
+bash Experiments/4.1/OpenEntity_Finetune/run_finetune_full.sh
 ```
 
-**(2) result**
+#### 4.1.2 Zero-shot Transferability
+Pre-trained adapters without any task-specific fine-tuning do not help zero-shot transfer on OpenEntity and only provide negligible gains on FIGER where absolute scores are near random.
 
-CosmosQA dev accuracy: 80.9
-CosmosQA test accuracy: 81.8
+OpenEntity (Zero-shot):
 
-The best performance is achieved at gpu_num=1, per_gpu_train_batch_size=64, GRADIENT_ACC=32, lr=1e-5, warmup=0 (it takes about 8 hours to get the best result running on singe 16G P100)
-The detailed hyperparamerters are listed in the running script.
+| Configuration | Fusion | Test F1 (Micro) |
+| :--- | :--- | :--- |
+| Baseline (RoBERTa-large) | N/A | ~24.0% |
+| + fac-adapter | add | ~15.3% |
+| + lin-adapter | add | ~14.1% |
+| + fac+lin | concat | ~19.4% |
+| + fac+lin | add | ~11.7% |
 
-**(3) Data format**
+FIGER (Zero-shot):
 
-For each answer, the input is `<s>context</s></s>question</s></s>answer</s>`, and will get a score for this answers. After getting four scores, we will select the answer with the highest score.
+| Configuration | Fusion | Test F1 (Micro) |
+| :--- | :--- | :--- |
+| Baseline (RoBERTa-large) | N/A | ~2.5% |
+| + fac-adapter | add | ~2.7% |
+| + lin-adapter | add | ~2.6% |
+| + fac+lin | add | ~2.8% |
+| + fac+lin | concat | ~2.6% |
 
-#### 3.2 SearchQA and Quasar-T 
-The source codes for fine-tuning on SearchQA and Quasar-T dataset are modified based on the [code](https://github.com/thunlp/OpenQA) of paper "Denoising Distantly Supervised Open-Domain Question Answering".
+Overall, K-Adapter’s factual and linguistic adapters need downstream fine-tuning to deliver value; their out-of-the-box zero-shot transfer is limited and can even be harmful on OpenEntity.
 
-## Use K-Adapter just like RoBERTa 
-- You can use K-Adapter (RoBERTa with adapters) just like RoBERTa, which almost have the same inputs and outputs. Specifically, we add a class `RobertawithAdapter` in `pytorch_transformers/my_modeling_roberta.py`.
-- A demo code `[run_example.sh and examples/run_example.py]` about how to use “RobertawithAdapter”, do inference, save model and load model. You can leave the arguments of adapters as default.
-- Now it is very easy to use Roberta with adapters. If you only want to use single adapter, for example, fac-adapter, then you can set the argument `meta_fac_adaptermodel='./pretrained_models/fac-adapter/pytorch_model.bin''` and set `meta_lin_adaptermodel=””`. If you want to use both adapters, just set the arguments `meta_fac_adaptermodel` and `meta_lin_adaptermodel` as the path of adapters.
+Run scripts:
 ```bash
-bash run_example.sh
+# Fine-tune on FIGER (for comparison; zero-shot analysis discussed in text)
+bash Experiments/4.1/FIGER_Finetune/run_finetune_figer_adapter.sh
 ```
-## TODO
-- Remove and merge redundant codes
-- Support other pre-trained models, such as BERT...
+
+Additional downstream:
+```bash
+# TACRED relation classification (fine-tuning)
+bash Experiments/4.1/TACRED_Finetune/run_finetune_tacred_adapter.sh
+
+# CosmosQA (multiple-choice QA)
+bash Experiments/4.1/CosmosQA_Finetune/run_finetune_cosmosqa_adapter.sh
+```
+
+### 4.2 Ablation Studies on Adapter Architecture
+
+#### 4.2.1 Impact of Adapter Size
+Varying the bottleneck `adapter_size` from 16 to 768 yields remarkably stable performance on OpenEntity (F1-A around 0.686–0.690), demonstrating high parameter efficiency. Small adapters are sufficient.
+
+Run scripts:
+```bash
+# Pretrain + finetune sweeps for adapter size
+bash Experiments/4.2/Adapter_Size/run_ablation_study_size.sh
+
+# Or run finetune per size directly
+bash Experiments/4.2/Adapter_Size/run_finetune_oe_size16.sh
+bash Experiments/4.2/Adapter_Size/run_finetune_oe_size64.sh
+bash Experiments/4.2/Adapter_Size/run_finetune_oe_size256.sh
+bash Experiments/4.2/Adapter_Size/run_finetune_oe_size768.sh
+```
+
+#### 4.2.2 Impact of Insertion Position
+We tested early (0–2), middle (10–12), late (21–23), and dispersed (0,11,22). Middle-layer insertion performs best (Micro F1: 0.706). Late-layer insertion significantly degrades performance.
+
+Run scripts:
+```bash
+# Pretrain variants for insertion positions / numbers
+bash Experiments/4.2/Insertion_Position/run_ablation_study_position.sh
+bash Experiments/4.2/Insertion_Position/run_ablation_study_number.sh
+
+# Finetune per setting
+bash Experiments/4.2/Insertion_Position/run_finetune_pos_early.sh
+bash Experiments/4.2/Insertion_Position/run_finetune_pos_middle.sh
+bash Experiments/4.2/Insertion_Position/run_finetune_pos_late.sh
+# Optional: run all positions convenience script
+bash Experiments/4.2/Insertion_Position/run_finetune_position_all.sh
+```
+
+#### 4.2.3 Impact of Internal Complexity
+Varying the number of internal transformer layers inside the adapter (1, 2, 4) shows minimal effect. The simplest 1-layer adapter performs on par with deeper variants.
+
+Run scripts:
+```bash
+# Pretrain variants for different internal depths
+bash Experiments/4.2/Internal_Complexity/run_ablation_study_layers.sh
+
+# Finetune per depth
+bash Experiments/4.2/Internal_Complexity/run_finetune_layers_1.sh
+bash Experiments/4.2/Internal_Complexity/run_finetune_layers_4.sh
+```
+
+### 4.3 Efficiency and Pre-training Data Analysis
+
+#### 4.3.1 Parameter and Inference Efficiency
+Adapter-tuning trains far fewer parameters than full fine-tuning but introduces predictable inference overhead (higher latency and memory). See `benchmark_inference.py` for measurements across batch sizes and adapter combinations.
+
+Run benchmark:
+```bash
+python benchmark_inference.py \
+  --model roberta-large \
+  --batch_sizes 1 8 16 32 \
+  --adapters none,factual,factual+linguistic
+```
+
+#### 4.3.2 Impact of Pre-training Data
+Adapters pre-trained on large, general-purpose knowledge (e.g., T-REx) transfer much better than those trained on smaller, task-specific data (e.g., TACRED). On OpenEntity, the T-REx adapter attains F1-A ≈ 0.762, whereas the TACRED-pretrained adapter reaches ≈ 0.397.
+
+Run scripts:
+```bash
+# Prepare TACRED pretraining data and train a TACRED adapter
+python Experiments/4.3/Pretraining_Data_Impact/preprocess_tacred.py \
+  --input_dir ./data/tacred \
+  --output_dir ./data/tacred_pretrain
+
+bash Experiments/4.3/Pretraining_Data_Impact/run_pretrain_on_tacred.sh
+
+# Evaluate the TACRED-pretrained adapter on OpenEntity
+bash Experiments/4.3/Pretraining_Data_Impact/run_finetune_with_tacred_adapter.sh
+
+# Pretrain factual/linguistic adapters on default corpora (for comparison)
+bash Experiments/4.3/Pretraining_Data_Impact/run_pretrain_fac-adapter.sh
+bash Experiments/4.3/Pretraining_Data_Impact/run_pretrain_lin-adapter.sh
+```
+
+## Data Notes
+- T-REx processing helpers:
+  - `scripts/clean_T_REx.py`
+  - `scripts/create_subdataset-relation-classification.ipynb`
+- OpenEntity/FIGER/TACRED formatting follows standard conventions described in our experiments. For TACRED pretraining, see `Experiments/4.3/Pretraining_Data_Impact/preprocess_tacred.py`.
+
+## Repro Tips
+- Adjust GPU devices via `CUDA_VISIBLE_DEVICES` in scripts when needed.
+- Hyperparameters for each experiment are specified inside the corresponding scripts under `Experiments/`.
+- Ensure adapter checkpoints exist or are trained before running fine-tuning scripts that expect them.
+
+## Visualization and Data Processing Scripts
+
+### Visualization Scripts
+Plot experimental results from `outputs_light/` directory:
+```bash
+python scripts/plot_exp1_adapter_size.py      # Adapter size ablation
+python scripts/plot_exp2_adapter_position.py  # Insertion position ablation  
+python scripts/plot_exp3_adapter_layers.py    # Internal complexity ablation
+python scripts/plot_exp4_efficiency.py        # Parameter efficiency analysis
+python scripts/plot_exp4_inference_from_doc.py # Inference benchmarking
+```
+Outputs: `figures/` directory with PNG plots and CSV data files.
+
+### Data Processing Scripts
+Preprocess datasets for adapter pretraining:
+```bash
+# T-REx dataset (factual adapter pretraining)
+python scripts/clean_T_REx.py --input_dir ./data/t_rex_raw --output_dir ./data/t_rex_cleaned
+jupyter notebook scripts/create_subdataset-relation-classification.ipynb
+
+# TACRED dataset (task-specific pretraining)
+python Experiments/4.3/Pretraining_Data_Impact/preprocess_tacred.py \
+  --input_dir ./data/tacred --output_dir ./data/tacred_pretrain
+
+# SciERC dataset (scientific relation extraction)
+python preprocess_scierc.py
+```
+
+## References
+- K-Adapter paper: https://arxiv.org/abs/2002.01808
 
