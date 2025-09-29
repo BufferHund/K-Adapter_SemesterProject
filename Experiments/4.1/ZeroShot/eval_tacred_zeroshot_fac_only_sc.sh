@@ -1,0 +1,20 @@
+#!/bin/bash
+# EVALUATION (TACRED): Zero-shot performance of roberta-large with fac-adapter.
+echo "====== EVALUATING (TACRED): ZERO-SHOT FAC-ADAPTER ======"
+python examples/run_finetune_TACRED_adapter.py \
+    --model_type roberta \
+    --model_name_or_path roberta-large \
+    --task_name=tacred \
+    --do_eval \
+    --data_dir=data/tacred  \
+    --output_dir=./proc_data  \
+    --comment 'eval_tacred_zeroshot_fac_only' \
+    --max_seq_length=184  \
+    --per_gpu_eval_batch_size=8   \
+    --overwrite_output_dir   \
+    --overwrite_cache \
+    --adapter_size 768 \
+    --adapter_list "0,11,22" \
+    --adapter_skip_layers 0 \
+    --meta_fac_adaptermodel="./pretrained_models/fac-adapter/pytorch_model.bin" \
+    --fusion_mode 'add'
